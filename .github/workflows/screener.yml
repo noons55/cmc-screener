@@ -1,0 +1,82 @@
+name: Update CMC screener
+
+on:
+  schedule:
+    # 22:07 UTC Mon-Fri = 9:07am Melbourne Tue-Sat (8:07am in winter):
+    # after the US close and before the ASX opens.
+    - cron: "7 22 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      markets:
+        description: "Markets to scan, e.g. 'au us' or 'all' (all 16 makes a large, slow page)"
+        default: "au us"
+        required: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: cmc-screener
+  cancel-in-progress: false
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Restore saved company financials
+        uses: actions/cache/restore@v4
+        with:
+          path: screener_output/cache/fundamentals.jsonl
+          key: fundamentals-${{ github.run_id }}
+          restore-keys: fundamentals-
+
+      - name: Run the screener
+        env:
+          MARKETS: ${{ github.event.inputs.markets || 'au us' }}
+        run: python cmc_screener.py --markets $MARKETS --no-open
+
+      - name: Save company financials for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: screener_output/cache/fundamentals.jsonl
+          key: fundamentals-${{ github.run_id }}
+
+      - name: Keep the spreadsheet and CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmc-ratings
+          path: |
+            screener_output/*.xlsx
+            screener_output/*.csv
+          retention-days: 14
+
+      - name: Set up GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the screener page
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: screener_output/site
+
+      - name: Publish the screener page
+        id: deployment
+        uses: actions/deploy-pages@v4
