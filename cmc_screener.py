@@ -86,6 +86,8 @@ except ImportError:  # pragma: no cover
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")          # pandas deprecation noise from inside yfinance
+warnings.filterwarnings("ignore", message=r".*inplace keyword.*")
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
