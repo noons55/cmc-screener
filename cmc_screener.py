@@ -1140,6 +1140,216 @@ def build_report_frame(results: list[dict]) -> pd.DataFrame:
     return out.drop(columns=empty)
 
 
+# =============================================================================
+# 7b. Top picks and plain-English explanations
+# =============================================================================
+
+GROUP_PHRASES = {
+    #  report column: (bullish phrase, bearish phrase)
+    "Trend": ("in a strong uptrend", "in a downtrend"),
+    "Momentum": ("strong price momentum", "losing momentum"),
+    "Volume": ("steady buying volume", "heavy selling volume"),
+    "Valuation": ("cheap compared with its peers", "expensive compared with its peers"),
+    "Quality": ("highly profitable", "unprofitable or low quality"),
+    "Growth": ("growing sales and earnings", "shrinking sales and earnings"),
+    "Health": ("a solid balance sheet", "a stretched balance sheet"),
+    "Sentiment": ("analysts are bullish", "analysts are bearish"),
+}
+
+
+def _v(r, col):
+    v = r.get(col)
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(f) else f
+
+
+def _pc(x, d=0):
+    return f"{x:+.{d}f}%".replace("+-", "-")
+
+
+def _join(parts):
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def headline(r) -> str:
+    score = _v(r, "Score") or 0
+    d = 1 if score >= 0 else -1
+    groups = [(g, _v(r, g)) for g in GROUP_PHRASES]
+    lead = sorted([(g, v) for g, v in groups if v is not None and v * d >= 40], key=lambda x: -abs(x[1]))[:3]
+    if not lead:
+        return "Mixed signals - no strong case either way"
+    words = [GROUP_PHRASES[g][0 if d > 0 else 1] for g, _ in lead]
+    text = _join(words)
+    return text[0].upper() + text[1:]
+
+
+def explain(r) -> str:
+    """A short paragraph, in plain English, on why the stock has its rating."""
+    out = []
+    score, rating = _v(r, "Score"), r.get("Rating", "")
+    tech, fund = _v(r, "Technical"), _v(r, "Fundamentals")
+
+    # 1. Price trend and momentum
+    trend = _v(r, "Trend")
+    r3, r12, rel, hi = _v(r, "3M %"), _v(r, "12M %"), _v(r, "vs Index 6M (pts)"), _v(r, "From 52W High %")
+    moves = []
+    if r3 is not None:
+        moves.append(f"{_pc(r3)} over 3 months")
+    if r12 is not None:
+        moves.append(f"{_pc(r12)} over 12 months")
+    s = ""
+    if trend is not None and trend >= 50:
+        s = "The share price is in a clear uptrend, above its 50- and 200-day averages"
+    elif trend is not None and trend <= -50:
+        s = "The share price is in a clear downtrend, below its 50- and 200-day averages"
+    elif trend is not None:
+        s = "The price trend is mixed"
+    if moves:
+        s = (s + f" ({_join(moves)})") if s else "The share price is " + _join(moves)
+    if s:
+        if rel is not None and abs(rel) >= 5:
+            s += f", {'beating' if rel > 0 else 'lagging'} its market index by {abs(rel):.0f} points over 6 months"
+        if hi is not None and hi > -5:
+            s += ", and it is trading near its 52-week high"
+        elif hi is not None and hi <= -35:
+            s += f", and it is {abs(hi):.0f}% below its 52-week high"
+        out.append(s + ".")
+
+    # 2. Valuation
+    pe, peer, fpe, dy = _v(r, "P/E"), _v(r, "Peer P/E (median)"), _v(r, "Fwd P/E"), _v(r, "Div Yield %")
+    if pe is not None and pe > 0 and peer:
+        diff = (pe / peer - 1) * 100
+        if abs(diff) < 10:
+            s = f"It is valued about in line with its sector, on a P/E of {pe:.1f} (peer median {peer:.1f})"
+        else:
+            s = (f"On a P/E of {pe:.1f} it is {abs(diff):.0f}% {'cheaper' if diff < 0 else 'more expensive'} "
+                 f"than its sector peers ({peer:.1f})")
+        if fpe and fpe > 0 and abs(fpe - pe) / pe > 0.1:
+            s += f", falling to {fpe:.1f} on next year's forecast earnings" if fpe < pe else f", rising to {fpe:.1f} on forecast earnings"
+        if dy and dy >= 3:
+            s += f", and it pays a {dy:.1f}% dividend"
+        out.append(s + ".")
+    elif (_v(r, "Net Margin %") or 0) < 0 or (_v(r, "ROE %") or 0) < 0:
+        out.append("It is currently losing money, so it has no P/E ratio.")
+    if not (pe is not None and pe > 0 and peer):
+        ps, pb = _v(r, "P/S"), _v(r, "P/B")
+        vals = [f"{ps:.1f} times its annual sales" if ps else "", f"{pb:.1f} times its book value" if pb else ""]
+        if any(vals):
+            out.append("It is priced at " + _join(vals) + ".")
+
+    # 3. Business quality and growth
+    bits = []
+    roe, nm = _v(r, "ROE %"), _v(r, "Net Margin %")
+    rg, eg = _v(r, "Revenue Growth %"), _v(r, "Earnings Growth %")
+    if roe is not None:
+        bits.append(f"return on equity of {roe:.0f}%")
+    if nm is not None and abs(nm) >= 0.5:
+        bits.append(f"a net profit margin of {nm:.0f}%")
+    if rg is not None:
+        bits.append(f"revenue {'up' if rg >= 0 else 'down'} {abs(rg):.0f}%")
+    if eg is not None:
+        bits.append(f"earnings {'up' if eg >= 0 else 'down'} {abs(eg):.0f}% on last year")
+    if bits:
+        out.append("The business has " + _join(bits) + ".")
+
+    # 4. Balance sheet
+    de, fy = _v(r, "Debt/Equity (x)"), _v(r, "FCF Yield %")
+    good, bad = [], []
+    if de is not None:
+        word = "low debt" if de < 0.5 else "high debt" if de > 2 else "moderate debt"
+        (bad if de > 2 else good).append(f"{word} (debt/equity {de:.1f}x)")
+    if fy is not None:
+        if fy >= 0:
+            good.append(f"free cash flow of {fy:.0f}% of its market value")
+        else:
+            bad.append("negative free cash flow (it is burning cash)")
+    cr = _v(r, "Current Ratio")
+    if cr is not None and not good and not bad:
+        (good if cr >= 1.5 else bad if cr < 1 else good).append(f"a current ratio of {cr:.1f} (short-term assets vs short-term bills)")
+    if good and bad:
+        out.append("It has " + _join(good) + ", but " + _join(bad) + ".")
+    elif good or bad:
+        out.append("It has " + _join(good or bad) + ".")
+
+    # 5. Analysts
+    an, n_an, tgt = _v(r, "Analyst (1=SB, 5=SS)"), _v(r, "# Analysts"), _v(r, "Target Upside %")
+    if an is not None and (n_an is None or n_an >= 3):
+        word = "Strong Buy" if an <= 1.5 else "Buy" if an <= 2.5 else "Hold" if an <= 3.5 else "Sell"
+        s = f"{int(n_an) if n_an else 'Covering'} analysts rate it {word} on average"
+        if tgt is not None:
+            s += f", with a price target {abs(tgt):.0f}% {'above' if tgt >= 0 else 'below'} the current price"
+        out.append(s + ".")
+
+    # 6. What to watch (the counter-case)
+    watch = []
+    rsi, short = _v(r, "RSI 14"), _v(r, "Short % Float")
+    if rsi is not None and rsi >= 70:
+        watch.append(f"the RSI is {rsi:.0f}, so it looks overbought and could pull back short term")
+    if rsi is not None and rsi <= 30:
+        watch.append(f"the RSI is {rsi:.0f}, so it looks oversold and could bounce short term")
+    if short is not None and short >= 10:
+        watch.append(f"{short:.0f}% of its shares are sold short")
+    if score is not None and score >= 0 and fund is not None and fund < 0:
+        watch.append("the rating rests on the chart; the company's numbers are weak")
+    if score is not None and score >= 0 and tech is not None and tech < 0:
+        watch.append("the rating rests on the company's numbers; the chart is weak")
+    if score is not None and score < 0 and fund is not None and fund > 30:
+        watch.append("the company's numbers are reasonable; the rating is mostly the weak chart")
+    if r.get("Financials") != "Full":
+        watch.append("full company financials were not available, so the fundamental view is limited")
+    if watch:
+        out.append("Worth watching: " + "; ".join(watch) + ".")
+    return " ".join(out)
+
+
+def mark_top_picks(report: pd.DataFrame, top_n: int) -> pd.DataFrame:
+    """Flag at most top_n buys and top_n sells where technicals and fundamentals strongly agree.
+    Picks are spread across markets (round robin by rank) so one market can't take every slot."""
+    df = report.copy()
+    df["Top Pick"] = ""
+    if top_n <= 0 or "Fundamentals" not in df:
+        return df
+    mcap = pd.to_numeric(df.get("Mkt Cap (bn)"), errors="coerce").fillna(0)
+    full = df.get("Financials", pd.Series("", index=df.index)) == "Full"
+    tech, fund = df["Technical"], df["Fundamentals"]
+    sides = {
+        "Top Buy": (df["Rating"] == "Strong Buy") & (tech >= 40) & (fund >= 40) & full & (mcap >= 0.3),
+        "Top Sell": (df["Rating"] == "Strong Sell") & (tech <= -40) & (fund <= -40) & full & (mcap >= 0.3),
+    }
+    for label, ok_mask in sides.items():
+        cand = df[ok_mask].sort_values(["Score", "Fundamentals"], ascending=label == "Top Sell")
+        queues = [list(g.index) for _, g in cand.groupby("Market", sort=False)]
+        queues.sort(key=lambda q: cand.index.get_loc(q[0]))
+        chosen = []
+        while len(chosen) < top_n and any(queues):
+            for q in queues:
+                if q and len(chosen) < top_n:
+                    chosen.append(q.pop(0))
+        df.loc[chosen, "Top Pick"] = label
+    return df
+
+
+def add_explanations(report: pd.DataFrame, top_n: int) -> pd.DataFrame:
+    df = mark_top_picks(report, top_n)
+    recs = df.to_dict("records")
+    df["Headline"] = [headline(r) for r in recs]
+    df["Why"] = [explain(r) for r in recs]
+    # keep the readable columns right after the name
+    cols = list(df.columns)
+    for c in ["Why", "Headline", "Top Pick"]:
+        cols.remove(c)
+        cols.insert(cols.index("Name") + 1, c)
+    return df[cols]
+
+
 def write_excel(report: pd.DataFrame, path: Path, run_note: str) -> None:
     from openpyxl.formatting.rule import ColorScaleRule, FormulaRule
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -1158,6 +1368,8 @@ def write_excel(report: pd.DataFrame, path: Path, run_note: str) -> None:
     method = pd.DataFrame(METHOD_ROWS, columns=["Section", "Signal", "Bullish (+1)", "Bearish (-1)", "Notes"])
     sheets = {
         "All Ratings": report,
+        "Top Picks": pd.concat([report[report.get("Top Pick", "") == "Top Buy"],
+                               report[report.get("Top Pick", "") == "Top Sell"].iloc[::-1]]),
         "Strong Buy": report[report["Rating"] == "Strong Buy"],
         "Strong Sell": report[report["Rating"] == "Strong Sell"].iloc[::-1],
     }
@@ -1171,7 +1383,7 @@ def write_excel(report: pd.DataFrame, path: Path, run_note: str) -> None:
     header_font = Font(bold=True, color="FFFFFF")
     widths = {"Rank": 6, "Rating": 12, "Score": 7, "Ticker": 11, "Name": 32, "Market": 14,
               "CMC Brokerage": 22, "Exchange": 14, "Sector": 20, "Industry": 26, "Ccy": 6, "Price": 10,
-              "Bullish signals": 90, "Bearish signals": 70, "Price date": 11, "Financials": 10}
+              "Bullish signals": 90, "Bearish signals": 70, "Top Pick": 10, "Headline": 40, "Why": 120, "Price date": 11, "Financials": 10}
 
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
         for name, frame in sheets.items():
@@ -1264,6 +1476,7 @@ WEB_KEYS = {
     "Volume 20d vs 50d": "volr", "3M %": "r3m", "12M %": "r12m", "vs Index 6M (pts)": "rel6m",
     "From 52W High %": "hi52", "Bullish signals": "bull", "Bearish signals": "bear",
     "Financials": "fin", "Price date": "date",
+    "Top Pick": "pick", "Headline": "head", "Why": "why",
 }
 
 
@@ -1507,6 +1720,36 @@ footer{margin:34px 0 28px;color:var(--muted);font-size:.82rem;display:grid;gap:1
 footer p{margin:0;max-width:75ch}
 .loader{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
+
+/* ---- top picks ---- */
+.picks{margin-top:16px;display:grid;gap:12px}
+.picks-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.picks-head h2{font-family:var(--font-display);font-stretch:85%;font-weight:800;font-size:1.45rem;margin:0;text-wrap:balance}
+.picks-head p{margin:2px 0 0;color:var(--muted);font-size:.86rem;max-width:60ch}
+.tabs{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}
+.tab{border:none;background:none;border-radius:999px;padding:6px 14px;font-weight:700;font-size:.88rem;cursor:pointer;color:var(--muted)}
+.tab[aria-selected="true"].buy{background:var(--sb);color:var(--surface)}
+.tab[aria-selected="true"].sell{background:var(--ss);color:var(--surface)}
+.pick-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:12px}
+.pick{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0;box-shadow:var(--shadow)}
+.pick.buy{border-top:3px solid var(--sb)} .pick.sell{border-top:3px solid var(--ss)}
+.pick-top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:start}
+.pick-n{font-family:var(--font-data);font-weight:600;color:var(--muted);font-size:.85rem;padding-top:4px}
+.pick .tk{font-family:var(--font-display);font-stretch:85%;font-weight:800;font-size:1.3rem;line-height:1.1}
+.pick .nm{font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick .mt{font-size:.78rem;color:var(--muted)}
+.pick .sc{text-align:right;font-family:var(--font-data);font-weight:600;font-size:1.5rem;line-height:1}
+.pick .sc small{display:block;font-family:var(--font-body);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-top:4px}
+.pick .hl{font-weight:700;font-size:.95rem;line-height:1.35}
+.pick .why{margin:0;font-size:.88rem;line-height:1.55;color:var(--ink)}
+.pick .st{margin-top:auto;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.78rem;padding-top:8px;border-top:1px solid var(--line)}
+.pick .st em{font-style:normal;color:var(--muted);margin-right:4px}
+.pick .more{align-self:flex-start;background:none;border:none;color:var(--accent);font-weight:700;cursor:pointer;padding:2px 0}
+.why-box{background:var(--surface-2);border-radius:12px;padding:12px 14px}
+.why-box .hl{font-weight:700;margin:0 0 4px}
+.why-box p{margin:0;line-height:1.6;font-size:.9rem}
+.card .hl{grid-column:1 / -1;display:block;font-size:.84rem;font-weight:600;margin-top:4px}
+
 @media (max-width:860px){
   .filters{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .filters .search{grid-column:1 / -1}
@@ -1538,6 +1781,20 @@ footer p{margin:0;max-width:75ch}
 </header>
 
 <main class="wrap">
+  <section class="picks" id="picks" aria-label="Top picks" hidden>
+    <div class="picks-head">
+      <div>
+        <h2 id="picksTitle">Top picks</h2>
+        <p id="picksNote">The strongest buys and sells, where the chart and the company's numbers agree.</p>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Top buys or sells">
+        <button class="tab buy" type="button" role="tab" data-side="buy" aria-selected="true">Top buys</button>
+        <button class="tab sell" type="button" role="tab" data-side="sell" aria-selected="false">Top sells</button>
+      </div>
+    </div>
+    <div class="pick-list" id="pickList"></div>
+  </section>
+
   <section class="deck" aria-label="Screener filters">
     <div class="deck-head">
       <span class="label">Rating</span>
@@ -1618,7 +1875,7 @@ footer p{margin:0;max-width:75ch}
 const RATINGS = ["Strong Buy", "Buy", "Neutral", "Sell", "Strong Sell"];
 const RC = {"Strong Buy": "sb", "Buy": "b", "Neutral": "n", "Sell": "s", "Strong Sell": "ss"};
 const PAGE = 60;
-const TEXT_KEYS = new Set(["rating","ticker","name","market","brokerage","exchange","sector","industry","ccy","bull","bear","fin","date"]);
+const TEXT_KEYS = new Set(["rating","ticker","name","market","brokerage","exchange","sector","industry","ccy","bull","bear","fin","date","pick","head","why"]);
 // CSV header (from cmc_screener.py) -> short key
 const HEADER_MAP = {
   "Rank":"rank","Rating":"rating","Score":"score","Ticker":"ticker","Name":"name","Market":"market",
@@ -1631,7 +1888,7 @@ const HEADER_MAP = {
   "FCF Yield %":"fcfy","Analyst (1=SB, 5=SS)":"an","# Analysts":"an_n","Target Upside %":"tgt",
   "Short % Float":"short","RSI 14":"rsi","Stoch %K":"stoch","CCI 20":"cci","MFI 14":"mfi","ADX 14":"adx",
   "ATR %":"atr","Volume 20d vs 50d":"volr","3M %":"r3m","12M %":"r12m","vs Index 6M (pts)":"rel6m",
-  "From 52W High %":"hi52","Bullish signals":"bull","Bearish signals":"bear","Financials":"fin","Price date":"date"
+  "From 52W High %":"hi52","Bullish signals":"bull","Bearish signals":"bear","Financials":"fin","Price date":"date","Top Pick":"pick","Headline":"head","Why":"why"
 };
 const SORTS = {
   score:{dir:-1}, fund:{dir:-1}, tech:{dir:-1}, val:{dir:-1}, pe:{dir:1, pos:true}, dy:{dir:-1},
@@ -1831,6 +2088,7 @@ function renderCards(items) {
       <span class="c-top"><span class="chip ${RC[s.rating] || "n"}">${esc(s.rating)}</span><span class="rank">#${s.rank}</span></span>
       <span class="tk">${esc(s.ticker)}</span>
       <span class="nm">${esc(s.name || "")}</span>
+      ${s.pick ? `<span class="hl">${s.pick === "Top Buy" ? "\u2605 Top buy" : "\u2605 Top sell"}: ${esc(s.head || "")}</span>` : ""}
       <span class="mt">${esc([s.market, s.sector].filter(Boolean).join(" · "))}</span>
       <span class="sc"><small>Score</small><b class="score-${RC[s.rating] || "n"}">${sgn(s.score)}</b>${meter(s.score)}</span>
       <span class="st num">${statLine(s)}</span>
@@ -1887,6 +2145,37 @@ function render() {
   $("#sort").value = S.sort;
 }
 
+// ---------- top picks ----------
+let pickSide = "buy";
+function renderPicks() {
+  const want = pickSide === "buy" ? "Top Buy" : "Top Sell";
+  const all = ALL.filter(s => s.pick);
+  $("#picks").hidden = !all.length;
+  if (!all.length) return;
+  const list = ALL.filter(s => s.pick === want).sort((a, b) => pickSide === "buy" ? b.score - a.score : a.score - b.score);
+  const nb = all.filter(s => s.pick === "Top Buy").length, ns = all.length - nb;
+  $("#picksTitle").textContent = `Today's top ${nb} buys and ${ns} sells`;
+  document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", t.dataset.side === pickSide));
+  $("#pickList").innerHTML = list.length ? list.map((s, i) => `
+    <article class="pick ${pickSide}">
+      <div class="pick-top">
+        <span class="pick-n">${i + 1}</span>
+        <div style="min-width:0"><div class="tk">${esc(s.ticker)}</div><div class="nm">${esc(s.name || "")}</div>
+          <div class="mt">${esc([s.market, s.sector].filter(Boolean).join(" \u00b7 "))}</div></div>
+        <div class="sc score-${RC[s.rating] || "n"}">${sgn(s.score)}<small>${esc(s.rating)}</small></div>
+      </div>
+      <div class="hl">${esc(s.head || "")}</div>
+      <p class="why">${esc(s.why || "")}</p>
+      <div class="st num">
+        <span><em>Price</em>${esc(s.ccy || "")} ${price(s.price)}</span>
+        <span><em>P/E</em>${has(s.pe) ? fmt(s.pe, 1) + (has(s.peer_pe) ? ` <span class="muted">vs ${fmt(s.peer_pe, 1)}</span>` : "") : "loss-making"}</span>
+        <span><em>3M</em><b class="${cls(s.r3m)}">${sgn(s.r3m, 0, "%")}</b></span>
+        <span><em>12M</em><b class="${cls(s.r12m)}">${sgn(s.r12m, 0, "%")}</b></span>
+      </div>
+      <button class="more" type="button" data-t="${esc(s.ticker)}">All figures and signals</button>
+    </article>`).join("") : `<div class="empty">No stocks met the bar for a top ${pickSide} today.</div>`;
+}
+
 // ---------- detail sheet ----------
 function dl(rows) {
   return `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd class="num">${v}</dd>`).join("")}</dl>`;
@@ -1926,6 +2215,8 @@ function openDetail(ticker) {
         <span><em>Mkt cap</em><span class="num">${has(s.mcap) ? fmt(s.mcap, 2) + " bn " + esc(s.ccy || "") : "–"}</span></span>
         <span><em>CMC brokerage</em>${esc((s.brokerage || "–").replace("<=", "≤"))}</span>
       </div>
+      ${s.why ? `<section><h3>Why it's rated ${esc(s.rating)}${s.pick ? ` \u00b7 ${esc(s.pick)}` : ""}</h3>
+        <div class="why-box"><p class="hl">${esc(s.head || "")}</p><p>${esc(s.why)}</p></div></section>` : ""}
       <section>
         <h3>Score breakdown</h3>
         <div class="breakdown">
@@ -1995,10 +2286,13 @@ function setData(rows, meta, example) {
   $("#genNote").textContent = META.generated ? `Results generated ${niceDate(META.generated.slice(0, 10))} at ${META.generated.slice(11)}.` : "";
   $("#weightNote").textContent = has(fw) ? `This run weights fundamentals at ${Math.round(fw * 100)}% and technicals at ${Math.round((1 - fw) * 100)}%.` : "";
   shown = PAGE;
+  renderPicks();
   render();
 }
 
 function bind() {
+  document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => { pickSide = t.dataset.side; renderPicks(); }));
+  $("#pickList").addEventListener("click", e => { const b = e.target.closest("[data-t]"); if (b) openDetail(b.dataset.t); });
   $("#ladderKeys").addEventListener("click", e => {
     const b = e.target.closest("[data-r]"); if (!b) return;
     const r = b.dataset.r;
@@ -2118,6 +2412,8 @@ def parse_args():
                         "growth, debt, cash flow, analyst targets (one request per stock, cached 7 days). "
                         "quick: only P/E, P/B, EPS and analyst rating from the stock list (fast). "
                         "off: technical only.")
+    p.add_argument("--top", type=int, default=10, metavar="N",
+                   help="How many Top Buys and Top Sells to flag (default 10 each; 0 = none)")
     p.add_argument("--fund-weight", type=float, default=DEFAULT_FUND_WEIGHT,
                    help=f"Share of the final score from fundamentals, 0-1 (default {DEFAULT_FUND_WEIGHT})")
     p.add_argument("--min-mcap", type=float, default=50e6,
@@ -2246,6 +2542,7 @@ def main():
     fund_weight = args.fund_weight if args.fundamentals != "off" else 0.0
     results = [score_record(r, *tech[r["ticker"]], peers, fund_weight) for r in recs]
     report = build_report_frame(results)
+    report = add_explanations(report, args.top if args.fundamentals != "off" else 0)
     if args.fundamentals == "off" and "Financials" in report:
         report["Financials"] = "Off"
 
@@ -2283,14 +2580,13 @@ def main():
     print("  " + "   ".join(f"{r}: {counts.get(r, 0):,}" for r in RATING_ORDER))
     if skipped:
         print("  skipped: " + ", ".join(f"{k} {v:,}" for k, v in skipped.items()))
-    top = report[report["Rating"] == "Strong Buy"].head(15)
-    if len(top):
-        print("\n Top Strong Buys                              Score  Tech  Fund   P/E")
-        for _, r in top.iterrows():
-            name = str(r["Name"])[:26] if pd.notna(r["Name"]) else ""
-            fund = f"{r['Fundamentals']:>5.0f}" if "Fundamentals" in r and pd.notna(r["Fundamentals"]) else "    -"
-            pe = f"{r['P/E']:>6.1f}" if "P/E" in r and pd.notna(r["P/E"]) else "     -"
-            print(f"  {r['Ticker']:<12}{name:<30}{int(r['Score']):>6}{int(r['Technical']):>6}{fund}{pe}")
+    for label in ("Top Buy", "Top Sell"):
+        picks = report[report["Top Pick"] == label] if "Top Pick" in report else report.iloc[0:0]
+        if len(picks):
+            print(f"\n {label}s")
+            for _, r in picks.iterrows():
+                name = str(r["Name"])[:28] if pd.notna(r["Name"]) else ""
+                print(f"  {int(r['Score']):>4}  {r['Ticker']:<11}{name:<30}{r['Headline']}")
     size_mb = site_path.stat().st_size / 1e6
     print(f"\n Screener page: {site_path.resolve()}  ({size_mb:.1f} MB)")
     print("   To deploy, upload the 'site' folder (just index.html) to any static host -")
