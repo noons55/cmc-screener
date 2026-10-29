@@ -1,6 +1,6 @@
 #!/bin/bash
 # Double-click this file to run the stock screener (ASX + US).
-# First run sets up Python packages in a .venv folder here (a minute or two).
+# First run sets up Python packages in a .venv.nosync folder (not synced to iCloud) here (a minute or two).
 # When it finishes, the screener page opens in your browser.
 # Results are saved in the screener_output folder next to this file.
 
@@ -21,16 +21,16 @@ run() {
     return 1
   fi
 
-  if [ ! -x .venv/bin/python ]; then
+  if [ ! -x .venv.nosync/bin/python ]; then
     echo "First run: setting up with $("$PY" --version 2>&1) (about a minute)..."
-    "$PY" -m venv .venv || return 1
-    .venv/bin/python -m pip install --quiet --upgrade pip || return 1
+    "$PY" -m venv .venv.nosync || return 1
+    .venv.nosync/bin/python -m pip install --quiet --upgrade pip || return 1
   fi
   echo "Checking packages..."
-  .venv/bin/python -m pip install --quiet --upgrade -r requirements.txt || return 1
+  .venv.nosync/bin/python -m pip install --quiet --upgrade -r requirements.txt || return 1
   echo
 
-  .venv/bin/python -u cmc_screener.py --markets au us "$@"
+  .venv.nosync/bin/python -u cmc_screener.py --markets au us "$@"
 }
 
 run "$@" 2>&1 | tee "$LOG"

@@ -1,3 +1,6 @@
 screener_output/
 __pycache__/
 *.pyc
+.venv*/
+last_run.log
+cmc-screener.zip
