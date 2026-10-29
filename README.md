@@ -4,7 +4,7 @@ Rates the stocks on CMC Invest from **Strong Buy** to **Strong Sell** using 20 t
 
 ## The screener page
 
-The page is rebuilt automatically every weekday morning at about **9am Melbourne time** (8am in winter), after the US close and before the ASX opens, and published to this repo's GitHub Pages site (see the link under **About** on the repo page, or **Settings → Pages**).
+The page is rebuilt automatically every weekday morning at about **9am Melbourne time** (8am in winter), after the US close and before the ASX opens, and published at **https://noons55.github.io/cmc-screener/**.
 
 ## Run it now or change the markets
 

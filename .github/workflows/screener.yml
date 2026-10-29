@@ -51,6 +51,7 @@ jobs:
       - name: Run the screener
         env:
           MARKETS: ${{ github.event.inputs.markets || 'au us' }}
+          TZ: Australia/Melbourne
         run: python cmc_screener.py --markets $MARKETS --no-open
 
       - name: Save company financials for the next run
