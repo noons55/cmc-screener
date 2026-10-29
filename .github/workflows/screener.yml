@@ -16,6 +16,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write   # lets the run keep its own daily schedule switched on
 
 concurrency:
   group: cmc-screener
@@ -81,3 +82,12 @@ jobs:
       - name: Publish the screener page
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # GitHub pauses scheduled jobs in public repos after 60 days without commits.
+      # Re-enabling the workflow on each scheduled run keeps the daily update going.
+      - name: Keep the daily schedule switched on
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/screener.yml/enable"
