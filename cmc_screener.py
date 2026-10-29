@@ -1241,9 +1241,11 @@ def explain(r) -> str:
         out.append("It is currently losing money, so it has no P/E ratio.")
     if not (pe is not None and pe > 0 and peer):
         ps, pb = _v(r, "P/S"), _v(r, "P/B")
-        vals = [f"{ps:.1f} times its annual sales" if ps else "", f"{pb:.1f} times its book value" if pb else ""]
+        vals = [f"{ps:.1f} times its annual sales" if ps and ps > 0 else "", f"{pb:.1f} times its book value" if pb and pb > 0 else ""]
         if any(vals):
             out.append("It is priced at " + _join(vals) + ".")
+        if pb is not None and pb < 0:
+            out.append("Its book value is negative, meaning its liabilities are bigger than its assets.")
 
     # 3. Business quality and growth
     bits = []
