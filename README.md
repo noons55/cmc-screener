@@ -1,4 +1,4 @@
-# CMC Invest Screener
+# CMC Invest Screener (Daily Stock Ratings)
 
 Rates the stocks on CMC Invest from **Strong Buy** to **Strong Sell** using 20 technical signals (trend, momentum, volume) and up to 22 fundamental signals (P/E and other valuation ratios vs sector peers, quality, growth, financial health, analyst sentiment), then publishes an interactive screener page.
 
@@ -17,6 +17,8 @@ Each run also keeps the colour-coded Excel file and CSV for 14 days: open the ru
 To change the daily schedule or the default markets, edit `.github/workflows/screener.yml`.
 
 ## Run it on your own computer
+
+On a Mac, double-click **Run Screener.command** (it sets itself up the first time). Or from a terminal:
 
 ```
 pip install -r requirements.txt

@@ -1300,8 +1300,8 @@ SCREENER_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>CMC Invest Screener</title>
-<meta name="description" content="Stocks on CMC Invest rated from Strong Buy to Strong Sell on technicals and fundamentals.">
+<title>Daily Stock Ratings</title>
+<meta name="description" content="ASX and international stocks rated from Strong Buy to Strong Sell on technicals and fundamentals.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&display=swap">
@@ -1524,7 +1524,7 @@ footer p{margin:0;max-width:75ch}
   <div class="wrap">
     <div class="top-inner">
       <div>
-        <h1>CMC Invest <span class="mark">Screener</span></h1>
+        <h1>Daily Stock <span class="mark">Ratings</span></h1>
         <p class="runline" id="runline">Loading results...</p>
       </div>
       <button class="icon-btn" id="themeBtn" type="button" aria-label="Switch light or dark mode">
@@ -1597,7 +1597,7 @@ footer p{margin:0;max-width:75ch}
 
   <footer>
     <p><strong>How the rating works.</strong> Each stock gets up to 20 technical signals (trend, momentum, volume) and up to 22 fundamental signals (valuation against sector peers, quality, growth, financial health, analyst sentiment). Every signal votes +1, 0 or &minus;1. The score runs from &minus;100 to +100: Strong Buy at 50 and above, Buy 15 to 50, Neutral &minus;15 to 15, Sell &minus;50 to &minus;15, Strong Sell below &minus;50. <span id="weightNote"></span></p>
-    <p><span id="genNote"></span> Data from Yahoo Finance. Not financial advice: the rating is a mechanical summary of indicators, so use it to build a shortlist and do your own research before you trade.</p>
+    <p><span id="genNote"></span> Covers the main exchanges you can trade on CMC Invest; this is a personal tool, not affiliated with CMC Markets. Data from Yahoo Finance. Not financial advice: the rating is a mechanical summary of indicators, so use it to build a shortlist and do your own research before you trade.</p>
     <div class="loader">
       <label class="btn ghost" for="fileIn" tabindex="0" id="fileLabel">Load a results file</label>
       <input id="fileIn" type="file" accept=".csv,.json" hidden>
